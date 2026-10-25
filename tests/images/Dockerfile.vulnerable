@@ -1,0 +1,4 @@
+# An application library with published CRITICAL and HIGH advisories (libwebp in Pillow 10.0.0,
+# CVE-2023-4863, and later Pillow advisories): the library scan must block.
+FROM python:3.13-slim
+RUN pip install --no-cache-dir --root-user-action=ignore pillow==10.0.0

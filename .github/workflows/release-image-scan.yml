@@ -1,0 +1,119 @@
+# The weekly scan of the release image that is running now (ORG-BE-ADR-0015 §7), as a reusable
+# workflow. Unchanged dependencies become vulnerable when an advisory is published, and no change
+# triggers a scan then.
+#
+# It gates nothing: the run ends red while a release image has a blocking-class finding, so that GitHub
+# notifies (a failed scheduled run is mailed to the person who last changed the schedule), and turns
+# green again when the image is updated. Base-image findings are reported in the summary.
+#
+# A caller, on its default branch:
+#
+#   on:
+#     schedule:
+#       - cron: '17 6 * * 1'
+#     workflow_dispatch:
+#   permissions:
+#     contents: read
+#     packages: read
+#   jobs:
+#     scan:
+#       uses: QuantalQ/quaq-vulnerability-scan/.github/workflows/release-image-scan.yml@<full sha>
+#       with:
+#         images: |
+#           ghcr.io/org/product-backend:latest
+
+name: Release Image Scan
+
+on:
+  workflow_call:
+    inputs:
+      images:
+        description: Release images to scan, registry references, one per line.
+        type: string
+        required: true
+      runner:
+        description: Runner label the scan runs on.
+        type: string
+        default: ubuntu-24.04
+      registry:
+        description: Registry logged into with the caller's token before the images are pulled; empty logs into none.
+        type: string
+        default: ghcr.io
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  scan:
+    name: Scan the current release images
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 45
+    steps:
+      - name: Checkout the scanned repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: repository
+          persist-credentials: false
+
+      # The scan scripts at the commit the caller pinned, so the weekly run uses the same settings as
+      # the merge gate of the same repository.
+      - name: Checkout the shared scan
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: QuantalQ/quaq-vulnerability-scan
+          ref: ${{ job.workflow_sha }}
+          path: shared-scan
+          persist-credentials: false
+
+      - name: Log into registry ${{ inputs.registry }}
+        if: inputs.registry != ''
+        uses: docker/login-action@343f7c4344506bcbf9b4de18042ae17996df046d # v3.0.0
+        with:
+          registry: ${{ inputs.registry }}
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      # No release has been published before the first release, and then there is nothing to scan. The
+      # reason is printed, so a registry that cannot be read is not mistaken for a missing release. The
+      # image is pulled, so a stale local image of the same name is never scanned instead.
+      - name: Pull the release images
+        id: images
+        env:
+          IMAGES: ${{ inputs.images }}
+        run: |
+          set -euo pipefail
+          found=()
+          for ref in $IMAGES; do
+            if docker pull --quiet "$ref" >/dev/null 2>pull.err; then
+              found+=("$ref")
+            else
+              echo "::notice::No release image $ref to scan: $(head -c 300 pull.err)"
+            fi
+          done
+          echo "refs=${found[*]}" >> "$GITHUB_OUTPUT"
+
+      - name: Scan the release images
+        if: steps.images.outputs.refs != ''
+        env:
+          REFS: ${{ steps.images.outputs.refs }}
+        run: |
+          set -euo pipefail
+          read -r -a refs <<< "$REFS"
+          sh shared-scan/scripts/vuln-scan.sh --repo repository \
+            --report-dir "$RUNNER_TEMP/release-image-vulnerability-report" "${refs[@]}"
+
+      - name: Keep the report
+        if: always() && steps.images.outputs.refs != ''
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-image-vulnerability-report
+          path: ${{ runner.temp }}/release-image-vulnerability-report
+          if-no-files-found: ignore
+          retention-days: 90
+
+      - name: Remove the pulled images
+        if: always() && steps.images.outputs.refs != ''
+        env:
+          REFS: ${{ steps.images.outputs.refs }}
+        run: docker image rm --force $REFS || true

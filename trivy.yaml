@@ -1,0 +1,31 @@
+# The shared Trivy settings of the dependency vulnerability gate (ORG-BE-ADR-0015). Every scan reads
+# this file, in CI and locally, so a finding means the same in every repository and on every machine.
+# A change here reaches a product only when its pin of this repository is updated in a pull request.
+
+# HIGH and CRITICAL, that is CVSS 7.0 and up. MEDIUM, LOW and findings without a severity are not gated.
+severity:
+  - HIGH
+  - CRITICAL
+
+# A finding fails the scan; the scripts set their own exit code to tell a finding from a scanner error.
+exit-code: 1
+
+# Vulnerabilities only: the gate is not a secret or misconfiguration scan.
+scan:
+  scanners:
+    - vuln
+
+# The gated class: the libraries the application ships. The base image's operating-system packages are
+# scanned with `--pkg-types os` and reported only.
+pkg:
+  types:
+    - library
+
+# A vulnerability without a fixed version blocks as well; an exception covers it until a fix exists.
+vulnerability:
+  ignore-unfixed: false
+
+# The repository's one exception file, at its root.
+ignorefile: .trivyignore.yaml
+
+timeout: 15m

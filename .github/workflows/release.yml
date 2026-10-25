@@ -1,0 +1,283 @@
+# =============================================================================
+# VULNERABILITY SCAN | RELEASE
+# =============================================================================
+# Version bump, tag and push for quaq-vulnerability-scan, following the spec
+# toolkit's release workflow:
+#  Guard: must be dispatched from develop, main must be an ancestor of develop
+#  Validate RELEASE_VERSION / DEVELOPMENT_VERSION (semver)
+#  Mint a QuantalQ Release Bot installation token and check out with it, so
+#  every git push below is authored by the App
+#  Build gate (unit tests of the exception check + shellcheck)
+#  Bump VERSION, push the release commit to develop, then to main (same SHA),
+#  push the tag, publish the GitHub Release, then commit & push the next
+#  development version
+#
+# The tag is the release. Consumers pin the full commit SHA of the release
+# commit, with the tag as a comment (uses: QuantalQ/quaq-vulnerability-scan/
+# image-gate@<sha> # vX.Y.Z); Dependabot's github-actions ecosystem proposes
+# the next release's SHA. The end-to-end verdicts run in test.yml on every
+# pull request into develop, so the release commit has passed them.
+#
+# Requires vars.QUANTALQ_RELEASE_BOT_APP_ID and
+# secrets.QUANTALQ_RELEASE_BOT_PRIVATE_KEY (set org-wide), the App installed
+# on this repository and on the bypass list of the main/develop rulesets.
+#
+# Push order (develop, then main, then tag, then the dev bump) keeps
+# origin/main an ancestor of origin/develop at every intermediate state, so a
+# failed run can be re-run. "Detect existing release state" skips commits a
+# previous partial run already pushed.
+# =============================================================================
+
+name: Vulnerability Scan | Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      RELEASE_VERSION:
+        description: 'Version number for the release (e.g. 0.1.0)'
+        required: true
+      DEVELOPMENT_VERSION:
+        description: 'Next development version (e.g. 0.1.1-beta)'
+        required: true
+
+permissions:
+  contents: write # tagging & pushing back
+
+# Two concurrent releases racing to push main/develop/tags would break the
+# fast-forward invariant.
+concurrency:
+  group: vulnerability-scan-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Release
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Guard - must run on develop
+        run: |
+          set -euo pipefail
+          if [ "${{ github.ref_name }}" != "develop" ]; then
+            echo "::error::This workflow must be run from the 'develop' branch (got '${{ github.ref_name }}'). Select 'develop' as the branch when dispatching this workflow."
+            exit 1
+          fi
+
+      - name: Guard - validate version inputs
+        run: |
+          set -euo pipefail
+          RELEASE_VERSION="${{ github.event.inputs.RELEASE_VERSION }}"
+          DEVELOPMENT_VERSION="${{ github.event.inputs.DEVELOPMENT_VERSION }}"
+          SEMVER_RE='^[0-9]+\.[0-9]+\.[0-9]+$'
+          SEMVER_PRERELEASE_RE='^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'
+
+          if ! [[ "$RELEASE_VERSION" =~ $SEMVER_RE ]]; then
+            echo "::error::RELEASE_VERSION '$RELEASE_VERSION' is not a plain semver version (expected e.g. 0.1.0)."
+            exit 1
+          fi
+          if ! [[ "$DEVELOPMENT_VERSION" =~ $SEMVER_PRERELEASE_RE ]]; then
+            echo "::error::DEVELOPMENT_VERSION '$DEVELOPMENT_VERSION' is not a valid semver version (expected e.g. 0.1.1 or 0.1.1-beta)."
+            exit 1
+          fi
+
+          # Typo guard: compare the base X.Y.Z numerically after stripping any
+          # prerelease suffix. Not full semver precedence — it only catches a
+          # DEVELOPMENT_VERSION typed lower than or equal to RELEASE_VERSION.
+          DEV_BASE="${DEVELOPMENT_VERSION%%-*}"
+          if [ "$DEV_BASE" != "$RELEASE_VERSION" ]; then
+            LOWER=$(printf '%s\n%s\n' "$RELEASE_VERSION" "$DEV_BASE" | sort -V | head -n1)
+            if [ "$LOWER" != "$RELEASE_VERSION" ]; then
+              echo "::error::DEVELOPMENT_VERSION '$DEVELOPMENT_VERSION' looks lower than or equal to RELEASE_VERSION '$RELEASE_VERSION' — likely a typo."
+              exit 1
+            fi
+          fi
+
+      - name: Generate release bot app token
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ vars.QUANTALQ_RELEASE_BOT_APP_ID }}
+          private-key: ${{ secrets.QUANTALQ_RELEASE_BOT_PRIVATE_KEY }}
+
+      # An installation token cannot call GET /user (it authenticates as the
+      # installation, not as the App's bot user), so look the bot up by its
+      # well-known login instead — needed for the noreply commit author email.
+      - name: Resolve release bot user id
+        id: app-bot-user
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          set -euo pipefail
+          USER_ID=$(gh api "/users/${{ steps.app-token.outputs.app-slug }}[bot]" --jq '.id')
+          echo "user_id=$USER_ID" >> "$GITHUB_OUTPUT"
+
+      # actions/checkout persists this token as the credential for every later
+      # `git push` in the job, so no per-push token wiring is needed below.
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          ref: develop
+          token: ${{ steps.app-token.outputs.token }}
+
+      - name: Guard - main must be an ancestor of develop
+        run: |
+          set -euo pipefail
+          git fetch origin main develop
+          if ! git merge-base --is-ancestor origin/main origin/develop; then
+            echo "::error::origin/main is not an ancestor of origin/develop — branches have diverged."
+            echo "::error::Recovery: inspect 'git log origin/main..origin/develop' and 'git log origin/develop..origin/main', then merge main into develop as a real merge commit (git checkout develop && git merge origin/main && git push origin develop) before re-running."
+            exit 1
+          fi
+
+      - name: Guard - tag must not already exist
+        run: |
+          set -euo pipefail
+          TAG="v${{ github.event.inputs.RELEASE_VERSION }}"
+          if git rev-parse "$TAG" >/dev/null 2>&1; then
+            echo "::error::Tag $TAG already exists locally."
+            exit 1
+          fi
+          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
+            echo "::error::Tag $TAG already exists on origin."
+            exit 1
+          fi
+
+      # Tells from VERSION and the HEAD commit subjects which release commits a
+      # previous, partially failed run of the same inputs already pushed, so
+      # the commit-creating steps below can be skipped on retry.
+      - name: Detect existing release state
+        id: detect
+        run: |
+          set -euo pipefail
+          RELEASE_VERSION="${{ github.event.inputs.RELEASE_VERSION }}"
+          DEVELOPMENT_VERSION="${{ github.event.inputs.DEVELOPMENT_VERSION }}"
+          CURRENT_VERSION=$(tr -d '[:space:]' < VERSION)
+          HEAD_SUBJECT=$(git log -1 --format=%s)
+
+          RELEASE_COMMIT_PRESENT=false
+          DEV_COMMIT_PRESENT=false
+
+          if [ "$CURRENT_VERSION" == "$DEVELOPMENT_VERSION" ]; then
+            if [ "$HEAD_SUBJECT" != "Release: Set next development version $DEVELOPMENT_VERSION" ]; then
+              echo "::error::VERSION on develop already reads $DEVELOPMENT_VERSION, but HEAD ('$HEAD_SUBJECT') is not the expected 'Release: Set next development version $DEVELOPMENT_VERSION' commit. Refusing to guess — resolve the develop branch manually before retrying."
+              exit 1
+            fi
+            PARENT_SUBJECT=$(git log -1 --format=%s HEAD^1)
+            if [ "$PARENT_SUBJECT" != "Release: Version $RELEASE_VERSION" ]; then
+              echo "::error::HEAD^1 ('$PARENT_SUBJECT') is not the expected 'Release: Version $RELEASE_VERSION' commit. Refusing to guess — resolve the develop branch manually before retrying."
+              exit 1
+            fi
+            RELEASE_COMMIT_PRESENT=true
+            DEV_COMMIT_PRESENT=true
+          elif [ "$CURRENT_VERSION" == "$RELEASE_VERSION" ]; then
+            if [ "$HEAD_SUBJECT" != "Release: Version $RELEASE_VERSION" ]; then
+              echo "::error::VERSION on develop already reads $RELEASE_VERSION, but HEAD ('$HEAD_SUBJECT') is not the expected 'Release: Version $RELEASE_VERSION' commit. Refusing to guess — resolve the develop branch manually before retrying."
+              exit 1
+            fi
+            RELEASE_COMMIT_PRESENT=true
+          fi
+
+          echo "release_commit_present=$RELEASE_COMMIT_PRESENT" >> "$GITHUB_OUTPUT"
+          echo "dev_commit_present=$DEV_COMMIT_PRESENT" >> "$GITHUB_OUTPUT"
+          echo "Detected state: release_commit_present=$RELEASE_COMMIT_PRESENT dev_commit_present=$DEV_COMMIT_PRESENT"
+
+      # --- Build gate: the same checks as the check job of test.yml, before
+      # anything touches VERSION or git state.
+      - name: Build gate - unit tests and lint
+        run: |
+          set -euo pipefail
+          python3 -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/pip" install --quiet pytest==8.4.2 pyyaml==6.0.2
+          "$RUNNER_TEMP/venv/bin/python" -m pytest -q tests
+          shellcheck --shell=sh scripts/vuln-scan.sh
+
+      - name: Configure Git user
+        run: |
+          set -euo pipefail
+          git config --global user.name "${{ steps.app-token.outputs.app-slug }}[bot]"
+          git config --global user.email "${{ steps.app-bot-user.outputs.user_id }}+${{ steps.app-token.outputs.app-slug }}[bot]@users.noreply.github.com"
+
+      - name: Set release version
+        if: steps.detect.outputs.release_commit_present != 'true'
+        run: |
+          set -euo pipefail
+          echo "${{ github.event.inputs.RELEASE_VERSION }}" > VERSION
+          git add VERSION
+          git commit -m "Release: Version ${{ github.event.inputs.RELEASE_VERSION }}"
+
+      # The release commit is HEAD on a fresh run, but HEAD^1 on a retry where
+      # the dev-bump commit already exists; the tag and main must get exactly
+      # the release commit either way.
+      - name: Resolve release commit SHA
+        id: release_sha
+        run: |
+          set -euo pipefail
+          if [ "${{ steps.detect.outputs.dev_commit_present }}" == "true" ]; then
+            SHA=$(git rev-parse HEAD^1)
+          else
+            SHA=$(git rev-parse HEAD)
+          fi
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Create Git tag (local only)
+        run: |
+          set -euo pipefail
+          git tag -a "v${{ github.event.inputs.RELEASE_VERSION }}" -m "Release ${{ github.event.inputs.RELEASE_VERSION }}" "${{ steps.release_sha.outputs.sha }}"
+
+      - name: Push release commit to develop
+        run: |
+          set -euo pipefail
+          git push origin HEAD:develop
+
+      - name: Push release commit to main
+        run: |
+          set -euo pipefail
+          git push origin "${{ steps.release_sha.outputs.sha }}:main"
+
+      # Only the new tag, never --tags. Consumers pin the commit it points to.
+      - name: Push release tag
+        run: |
+          set -euo pipefail
+          git push origin "v${{ github.event.inputs.RELEASE_VERSION }}"
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          set -euo pipefail
+          TAG="v${{ github.event.inputs.RELEASE_VERSION }}"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "GitHub Release $TAG already exists — skipping."
+          else
+            gh release create "$TAG" --title "$TAG" --verify-tag --generate-notes
+          fi
+
+      - name: Set next development version
+        if: steps.detect.outputs.dev_commit_present != 'true'
+        run: |
+          set -euo pipefail
+          echo "${{ github.event.inputs.DEVELOPMENT_VERSION }}" > VERSION
+          git add VERSION
+          git commit -m "Release: Set next development version ${{ github.event.inputs.DEVELOPMENT_VERSION }}"
+
+      - name: Push develop
+        run: |
+          set -euo pipefail
+          git push origin HEAD:develop
+
+      - name: Summary
+        run: |
+          set -euo pipefail
+          {
+            echo "## Vulnerability Scan v${{ github.event.inputs.RELEASE_VERSION }} released"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Tag | \`v${{ github.event.inputs.RELEASE_VERSION }}\` |"
+            echo "| Release commit | \`${{ steps.release_sha.outputs.sha }}\` |"
+            echo "| Next development version | \`${{ github.event.inputs.DEVELOPMENT_VERSION }}\` |"
+            echo ""
+            echo "Pin in a consuming repository:"
+            echo "\`uses: ${{ github.repository }}/image-gate@${{ steps.release_sha.outputs.sha }} # v${{ github.event.inputs.RELEASE_VERSION }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
