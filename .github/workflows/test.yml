@@ -60,7 +60,7 @@ jobs:
       - name: An invalid exception entry stops the scan
         run: |
           mkdir -p "$RUNNER_TEMP/invalid"
-          printf 'vulnerabilities:\n  - id: CVE-2023-4863\n' > "$RUNNER_TEMP/invalid/.trivyignore.yaml"
+          printf 'vulnerabilities:\n  - id: CVE-2021-35042\n' > "$RUNNER_TEMP/invalid/.trivyignore.yaml"
           rc=0
           sh scripts/vuln-scan.sh --repo "$RUNNER_TEMP/invalid" --report-dir "$RUNNER_TEMP/invalid-reports" \
             vuln-scan-test:clean || rc=$?
