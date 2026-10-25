@@ -25,7 +25,8 @@ pkg:
 vulnerability:
   ignore-unfixed: false
 
-# The repository's one exception file, at its root.
-ignorefile: .trivyignore.yaml
+# The repository's one exception file, .trivyignore.yaml at its root, is passed by the scan script
+# (an empty one when the repository has none) and by the trivy-image action's ignore-file input; it is
+# not set here, because Trivy refuses an ignore file that does not exist.
 
 timeout: 15m

@@ -116,9 +116,7 @@ scan() { # image package-types report-file; returns Trivy's exit code
         --no-progress \
         "$1") || return 2
     copy_in "$cid" "$HERE/trivy.yaml" /tmp/trivy.yaml || return 2
-    if [ -f "$IGNORE_FILE" ]; then
-        copy_in "$cid" "$IGNORE_FILE" /tmp/.trivyignore.yaml || return 2
-    fi
+    copy_in "$cid" "$SCAN_IGNORE_FILE" /tmp/.trivyignore.yaml || return 2
     return "$(run_created "$cid" "$3")"
 }
 
@@ -132,6 +130,15 @@ if [ "$rc" -ne 0 ]; then
     fi
     annotate error "The exception check could not run (exit code $rc)."
     exit 2
+fi
+
+# Trivy refuses an ignore file that does not exist, so a repository without exceptions is scanned
+# with an empty one.
+if [ -f "$IGNORE_FILE" ]; then
+    SCAN_IGNORE_FILE=$IGNORE_FILE
+else
+    SCAN_IGNORE_FILE="$REPORT_DIR/no-exceptions.trivyignore.yaml"
+    printf 'vulnerabilities: []\n' > "$SCAN_IGNORE_FILE"
 fi
 
 blocked=0

@@ -21,7 +21,7 @@ inputs:
     description: File the result is written to; empty prints it to the log.
     default: ''
   ignore-file:
-    description: Exceptions, each with a statement and an expiry; empty applies none.
+    description: Exceptions, each with a statement and an expiry; the file must exist (Trivy refuses a missing one), empty applies none.
     default: .trivyignore.yaml
   package-types:
     description: 'library for what the application ships, os for the base image''s packages, or both.'
