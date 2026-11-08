@@ -1,7 +1,7 @@
 # =============================================================================
 # VULNERABILITY SCAN | RELEASE
 # =============================================================================
-# Version bump, tag and push for quaq-vulnerability-scan, following the spec
+# Version bump, tag and push for quaq-tool-001-02-ci-workflows, following the spec
 # toolkit's release workflow:
 #  Guard: must be dispatched from develop, main must be an ancestor of develop
 #  Validate RELEASE_VERSION / DEVELOPMENT_VERSION (semver)
@@ -13,7 +13,7 @@
 #  development version
 #
 # The tag is the release. Consumers pin the full commit SHA of the release
-# commit, with the tag as a comment (uses: QuantalQ/quaq-vulnerability-scan/
+# commit, with the tag as a comment (uses: QuantalQ/quaq-tool-001-02-ci-workflows/
 # image-gate@<sha> # vX.Y.Z); Dependabot's github-actions ecosystem proposes
 # the next release's SHA. The end-to-end verdicts run in test.yml on every
 # pull request into develop, so the release commit has passed them.
@@ -46,7 +46,7 @@ permissions:
 # Two concurrent releases racing to push main/develop/tags would break the
 # fast-forward invariant.
 concurrency:
-  group: vulnerability-scan-release
+  group: ci-workflows-release
   cancel-in-progress: false
 
 jobs:

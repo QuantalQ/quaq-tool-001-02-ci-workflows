@@ -17,7 +17,7 @@
 #     packages: read
 #   jobs:
 #     scan:
-#       uses: QuantalQ/quaq-vulnerability-scan/.github/workflows/release-image-scan.yml@<full sha>
+#       uses: QuantalQ/quaq-tool-001-02-ci-workflows/.github/workflows/release-image-scan.yml@<full sha>
 #       with:
 #         images: |
 #           ghcr.io/org/product-backend:latest
@@ -61,7 +61,7 @@ jobs:
       - name: Checkout the shared scan
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          repository: QuantalQ/quaq-vulnerability-scan
+          repository: QuantalQ/quaq-tool-001-02-ci-workflows
           ref: ${{ job.workflow_sha }}
           path: shared-scan
           persist-credentials: false

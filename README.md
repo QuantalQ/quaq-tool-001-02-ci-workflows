@@ -1,4 +1,15 @@
-# quaq-vulnerability-scan
+# quaq-tool-001-02-ci-workflows
+
+The shared CI pipelines of QuantalQ: composite actions and reusable GitHub workflows that the
+repositories of the organisation call instead of keeping their own copy. A consumer pins this
+repository by **full commit SHA**, with the release tag as a comment, so a change here reaches a
+repository only when that repository moves its pin.
+
+| Pipeline | Paths | Decision |
+|---|---|---|
+| Dependency vulnerability scan | `image-gate/`, `trivy-image/`, `scripts/`, `trivy.yaml`, `trivy-version`, `.github/workflows/release-image-scan.yml` | ORG-BE-ADR-0015 |
+
+## Dependency vulnerability scan
 
 The shared dependency vulnerability scan of QuantalQ backends: it scans **built container
 images** with [Trivy](https://trivy.dev) and gives the same verdict in CI and on a developer's
@@ -14,7 +25,7 @@ Each consuming repository scans its **shipped images** and its **test images** (
 builds to run the test suites), keeps its exceptions in `.trivyignore.yaml` at the repository
 root, and pins this repository by full commit SHA.
 
-## Contents
+### Contents
 
 | Path | What it is |
 |---|---|
@@ -32,7 +43,7 @@ Docker CLI reaches a daemon, also from inside a container.
 Exit codes: **0** no blocking finding, **1** a blocking finding or an invalid exception file,
 **2** no verdict (the scanner or the check could not run). A broken run never passes.
 
-## Merge gate
+### Merge gate
 
 A job in the pull-request workflow of the integration branch builds the images and runs the
 gate. Its name is the required status check.
@@ -51,7 +62,7 @@ gate. Its name is the required status check.
         run: |
           docker build --pull -f docker/prod/Dockerfile -t product:scan .
           docker build -f docker/dev/Dockerfile -t product-test:scan .
-      - uses: QuantalQ/quaq-vulnerability-scan/image-gate@<full sha> # vX.Y.Z
+      - uses: QuantalQ/quaq-tool-001-02-ci-workflows/image-gate@<full sha> # vX.Y.Z
         with:
           images: |
             product:scan
@@ -61,7 +72,7 @@ gate. Its name is the required status check.
 Blocking findings and reported base-image findings are written to the run summary; the full
 reports are kept as an artefact.
 
-## Weekly release-image scan
+### Weekly release-image scan
 
 On the default branch:
 
@@ -75,7 +86,7 @@ permissions:
   packages: read
 jobs:
   scan:
-    uses: QuantalQ/quaq-vulnerability-scan/.github/workflows/release-image-scan.yml@<full sha> # vX.Y.Z
+    uses: QuantalQ/quaq-tool-001-02-ci-workflows/.github/workflows/release-image-scan.yml@<full sha> # vX.Y.Z
     with:
       images: |
         ghcr.io/org/product:latest
@@ -84,7 +95,7 @@ jobs:
 It blocks nothing. The run is red while a release image has a blocking-class finding, so that
 GitHub notifies, and green again once the image is updated.
 
-## Exceptions
+### Exceptions
 
 `.trivyignore.yaml` at the repository root is Trivy's own ignore file. Every entry needs an
 `id`, a non-empty `statement` and an `expired_at` date; otherwise the scan stops before scanning
@@ -99,14 +110,14 @@ vulnerabilities:
     expired_at: 2027-01-31
 ```
 
-## Local command
+### Local command
 
 The local command scans locally built images with the same Trivy, settings and exception file.
 It takes the pin from the repository's own workflow files, so there is exactly one pin, and
 fails when the workflows reference this repository at no SHA or at more than one.
 
 ```make
-VULN_SCAN_REPO := QuantalQ/quaq-vulnerability-scan
+VULN_SCAN_REPO := QuantalQ/quaq-tool-001-02-ci-workflows
 VULN_SCAN_IMAGES := product:scan product-test:scan
 
 vuln-scan: ## scan the shipped and test images like the merge gate
@@ -132,7 +143,7 @@ Environment variables of `vuln-scan.sh`:
 | `VULN_SCAN_DOCKER_SOCKET` | `/var/run/docker.sock` | The daemon's socket as the daemon host sees it |
 | `VULN_SCAN_CACHE_VOLUME` | `quaq-vulnerability-scan-trivy-cache` | Volume that keeps Trivy's database between runs |
 
-## Updating
+### Updating
 
 Dependabot's `github-actions` ecosystem in a consuming repository proposes the SHA of a new
 release; a change of the settings therefore reaches a product as a reviewed pull request. Releases
