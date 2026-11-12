@@ -14,3 +14,5 @@
 - Reusable workflow `.github/workflows/release-image-scan.yml`: the weekly scan of the current
   release images, red while a release image has a blocking-class finding.
 - Published under the Apache License 2.0.
+- The release workflow mints the release bot token with `client-id` (`QUANTALQ_RELEASE_BOT_CLIENT_ID`), the
+  action pinned by commit SHA, and is shown as "Release".
