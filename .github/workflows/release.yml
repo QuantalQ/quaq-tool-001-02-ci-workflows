@@ -1,5 +1,5 @@
 # =============================================================================
-# VULNERABILITY SCAN | RELEASE
+# RELEASE
 # =============================================================================
 # Version bump, tag and push for quaq-tool-001-02-ci-workflows, following the spec
 # toolkit's release workflow:
@@ -18,7 +18,7 @@
 # the next release's SHA. The end-to-end verdicts run in test.yml on every
 # pull request into develop, so the release commit has passed them.
 #
-# Requires vars.QUANTALQ_RELEASE_BOT_APP_ID and
+# Requires vars.QUANTALQ_RELEASE_BOT_CLIENT_ID and
 # secrets.QUANTALQ_RELEASE_BOT_PRIVATE_KEY (set org-wide), the App installed
 # on this repository and on the bypass list of the main/develop rulesets.
 #
@@ -28,7 +28,7 @@
 # previous partial run already pushed.
 # =============================================================================
 
-name: Vulnerability Scan | Release
+name: Release
 
 on:
   workflow_dispatch:
@@ -94,9 +94,9 @@ jobs:
 
       - name: Generate release bot app token
         id: app-token
-        uses: actions/create-github-app-token@v3
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
         with:
-          app-id: ${{ vars.QUANTALQ_RELEASE_BOT_APP_ID }}
+          client-id: ${{ vars.QUANTALQ_RELEASE_BOT_CLIENT_ID }}
           private-key: ${{ secrets.QUANTALQ_RELEASE_BOT_PRIVATE_KEY }}
 
       # An installation token cannot call GET /user (it authenticates as the
