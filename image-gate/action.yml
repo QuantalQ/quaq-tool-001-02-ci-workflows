@@ -1,0 +1,42 @@
+name: Dependency vulnerability gate
+description: >-
+  Scans built images with the shared settings (ORG-BE-ADR-0015). HIGH and CRITICAL findings in the
+  application libraries fail the step; the base image's operating-system packages are reported.
+  The exception file is checked before any scan.
+
+inputs:
+  images:
+    description: Images to scan, present in the runner's Docker daemon; one per line or separated by spaces.
+    required: true
+  repository-path:
+    description: Checkout of the scanned repository; its .trivyignore.yaml applies.
+    default: .
+  report-name:
+    description: Name of the artefact the reports are kept in.
+    default: vulnerability-reports
+
+runs:
+  using: composite
+  steps:
+    # The same script as the local command, so CI and a local run give the same verdict for the same
+    # image, exception file and database state.
+    - name: Scan the images
+      shell: bash
+      env:
+        IMAGES: ${{ inputs.images }}
+        REPOSITORY_PATH: ${{ inputs.repository-path }}
+        REPORT_DIR: ${{ runner.temp }}/${{ inputs.report-name }}
+      run: |
+        set -euo pipefail
+        read -r -a images <<< "$(echo "$IMAGES" | tr '\n' ' ')"
+        sh "$GITHUB_ACTION_PATH/../scripts/vuln-scan.sh" \
+          --repo "$REPOSITORY_PATH" --report-dir "$REPORT_DIR" "${images[@]}"
+
+    - name: Keep the reports
+      if: always()
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      with:
+        name: ${{ inputs.report-name }}
+        path: ${{ runner.temp }}/${{ inputs.report-name }}
+        if-no-files-found: ignore
+        retention-days: 30

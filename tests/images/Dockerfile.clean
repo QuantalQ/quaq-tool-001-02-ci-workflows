@@ -1,0 +1,2 @@
+# No application libraries at all: the library scan has nothing to find.
+FROM alpine:3.22

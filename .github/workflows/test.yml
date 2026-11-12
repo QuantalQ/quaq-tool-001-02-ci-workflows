@@ -1,0 +1,74 @@
+name: Test
+
+on:
+  pull_request:
+    branches: [develop, main]
+  push:
+    branches: [develop]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Exception check and lint
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Unit tests of the exception check
+        run: |
+          python3 -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/pip" install --quiet pytest==8.4.2 pyyaml==6.0.2
+          "$RUNNER_TEMP/venv/bin/python" -m pytest -q tests
+
+      - name: Lint the scripts
+        run: shellcheck --shell=sh scripts/vuln-scan.sh
+
+  verdict:
+    name: Verdicts of the shared scan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Build the test images
+        run: |
+          docker build --pull -f tests/images/Dockerfile.clean -t vuln-scan-test:clean tests/images
+          docker build --pull -f tests/images/Dockerfile.vulnerable -t vuln-scan-test:vulnerable tests/images
+
+      # The action as a consumer uses it, on an image without application libraries.
+      - name: A clean image passes the gate
+        uses: ./image-gate
+        with:
+          images: vuln-scan-test:clean
+          report-name: clean-image-reports
+
+      - name: A vulnerable library blocks
+        run: |
+          rc=0
+          sh scripts/vuln-scan.sh --report-dir "$RUNNER_TEMP/vulnerable" vuln-scan-test:vulnerable || rc=$?
+          test "$rc" -eq 1 || { echo "expected exit code 1 (blocked), got $rc"; exit 1; }
+          grep -q 'Total: [1-9]' "$RUNNER_TEMP"/vulnerable/*-libraries.txt
+
+      - name: An invalid exception entry stops the scan
+        run: |
+          mkdir -p "$RUNNER_TEMP/invalid"
+          printf 'vulnerabilities:\n  - id: CVE-2021-35042\n' > "$RUNNER_TEMP/invalid/.trivyignore.yaml"
+          rc=0
+          sh scripts/vuln-scan.sh --repo "$RUNNER_TEMP/invalid" --report-dir "$RUNNER_TEMP/invalid-reports" \
+            vuln-scan-test:clean || rc=$?
+          test "$rc" -eq 1 || { echo "expected exit code 1 (invalid exception file), got $rc"; exit 1; }
+          ! ls "$RUNNER_TEMP"/invalid-reports/*-libraries.txt 2>/dev/null
+
+      - name: A missing image gives no verdict
+        run: |
+          rc=0
+          sh scripts/vuln-scan.sh --report-dir "$RUNNER_TEMP/missing" vuln-scan-test:does-not-exist || rc=$?
+          test "$rc" -eq 2 || { echo "expected exit code 2 (no verdict), got $rc"; exit 1; }

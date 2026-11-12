@@ -1,0 +1,58 @@
+name: Scan an image with Trivy
+description: >-
+  Scans a container image, or writes its CycloneDX bill of materials, with the shared Trivy version and
+  settings. For the merge gate use the image-gate action, which also checks the exception file and
+  separates blocking from reported findings.
+
+inputs:
+  image-ref:
+    description: Image to scan, a local tag or a registry reference.
+    required: true
+  severity:
+    description: Severities that count as a finding.
+    default: HIGH,CRITICAL
+  exit-code:
+    description: '1 fails the step on a finding, 0 only reports.'
+    default: '1'
+  format:
+    description: Trivy output format; cyclonedx writes the bill of materials.
+    default: table
+  output:
+    description: File the result is written to; empty prints it to the log.
+    default: ''
+  ignore-file:
+    description: Exceptions, each with a statement and an expiry; the file must exist (Trivy refuses a missing one), empty applies none.
+    default: .trivyignore.yaml
+  package-types:
+    description: 'library for what the application ships, os for the base image''s packages, or both.'
+    default: os,library
+
+runs:
+  using: composite
+  steps:
+    # The runner keeps its home between jobs on a self-hosted runner, so the vulnerability database is
+    # downloaded once and then refreshed. The action's own cache would restore and save the same files
+    # a second time. The Trivy version is the one the local command runs.
+    - name: Locate the Trivy cache and version
+      id: settings
+      shell: bash
+      run: |
+        echo "dir=$HOME/.cache/trivy" >> "$GITHUB_OUTPUT"
+        echo "version=v$(cat "$GITHUB_ACTION_PATH/../trivy-version")" >> "$GITHUB_OUTPUT"
+        echo "config=$GITHUB_ACTION_PATH/../trivy.yaml" >> "$GITHUB_OUTPUT"
+
+    # Pinned to the commit of the release: a tag of a third-party action can be moved.
+    - name: Run Trivy
+      uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+      with:
+        vuln-type: ${{ inputs.package-types }}
+        version: ${{ steps.settings.outputs.version }}
+        trivy-config: ${{ steps.settings.outputs.config }}
+        image-ref: ${{ inputs.image-ref }}
+        severity: ${{ inputs.severity }}
+        exit-code: ${{ inputs.exit-code }}
+        format: ${{ inputs.format }}
+        output: ${{ inputs.output }}
+        trivyignores: ${{ inputs.ignore-file }}
+        cache: 'false'
+        cache-dir: ${{ steps.settings.outputs.dir }}

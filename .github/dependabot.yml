@@ -1,0 +1,11 @@
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    # The workflow files and the two composite actions.
+    directories:
+      - /
+      - /image-gate
+      - /trivy-image
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5

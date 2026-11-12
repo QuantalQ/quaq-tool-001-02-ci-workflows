@@ -1,0 +1,5 @@
+# An application library with published CRITICAL and HIGH advisories (Django 3.2.0, for example the
+# SQL injection CVE-2021-35042): the library scan must block. A pure-Python wheel, so it installs on
+# every Python version without a build step.
+FROM python:3.13-slim
+RUN pip install --no-cache-dir --root-user-action=ignore django==3.2.0
